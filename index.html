@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>面接メモ帳</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
 :root {
@@ -221,6 +222,15 @@ header h1 { font-size: 15px; font-weight: 700; color: #f5f3ee; letter-spacing: 0
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 
+/* Sync status */
+.sync-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+.sync-dot.idle { background: rgba(255,255,255,0.3); }
+.sync-dot.ok { background: #43e97b; box-shadow: 0 0 5px #43e97b; }
+.sync-dot.busy { background: #ffd86e; animation: pulse 1s infinite; }
+.sync-dot.err { background: #ff6b6b; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.sync-label { font-size: 10px; color: rgba(255,255,255,0.6); white-space: nowrap; }
+
 @media (max-width: 600px) {
   .sidebar { width: 180px; min-width: 180px; }
   :root { --node-w: 220px; }
@@ -234,6 +244,11 @@ header h1 { font-size: 15px; font-weight: 700; color: #f5f3ee; letter-spacing: 0
   <h1>📋 面接メモ帳</h1>
   <button class="hdr-btn" onclick="collapseAll()">すべて折りたたむ</button>
   <button class="hdr-btn" onclick="expandAll()">すべて展開</button>
+  <div style="display:flex;align-items:center;gap:7px;margin-left:4px">
+    <div class="sync-dot idle" id="syncDot"></div>
+    <span class="sync-label" id="syncLabel">未接続</span>
+  </div>
+  <button class="hdr-btn" id="driveBtn" onclick="driveAuth()">☁ Drive連携</button>
 </header>
 
 <div class="tabs" id="tabBar"></div>
@@ -263,12 +278,25 @@ header h1 { font-size: 15px; font-weight: 700; color: #f5f3ee; letter-spacing: 0
 </div>
 
 <script>
+// ═══════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════
+const CLIENT_ID = '758433368320-1s1ims7fbgc21u44q77ldduiipa9126r.apps.googleusercontent.com';
+const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
+const FILE_NAME = 'mensetsu_memo.json';
+
+// ═══════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════
 const SK = 'mensetsu_v4';
 const fresh = () => ({ activeTab:'common', companies:[], common:{ qs:[] }, cd:{} });
 let S = (() => { try { const r=localStorage.getItem(SK); return r?JSON.parse(r):fresh(); } catch(e){ return fresh(); } })();
 let selId = null;
 
-const save = () => localStorage.setItem(SK, JSON.stringify(S));
+const save = () => {
+  localStorage.setItem(SK, JSON.stringify(S));
+  scheduleDriveSync();
+};
 const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
@@ -281,18 +309,132 @@ function makeQ(depth=0) { return { id:uid(), text:'', keywords:[], kwCollapsed:f
 function findQ(qs, id) { for(const q of qs){ if(q.id===id) return q; const f=findQ(q.children,id); if(f) return f; } return null; }
 function delQ(qs, id) { const i=qs.findIndex(q=>q.id===id); if(i!==-1){ qs.splice(i,1); return true; } for(const q of qs){ if(delQ(q.children,id)) return true; } return false; }
 function countDesc(q) { let n=q.children.length; q.children.forEach(c=>{ n+=countDesc(c); }); return n; }
-function findRootId(qs, id) { for(const q of qs){ if(q.id===id||findQ(q.children,id)) return q.id; } return null; }
 
-// ── Tabs ──
+// ═══════════════════════════════════════
+// GOOGLE DRIVE SYNC
+// ═══════════════════════════════════════
+let accessToken = null;
+let driveFileId = null;
+let syncTimer = null;
+let tokenClient = null;
+
+function setSyncStatus(state, label) {
+  const dot = document.getElementById('syncDot');
+  const lbl = document.getElementById('syncLabel');
+  dot.className = 'sync-dot ' + state;
+  lbl.textContent = label;
+}
+
+function driveAuth() {
+  if (!tokenClient) {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      callback: async (resp) => {
+        if (resp.error) { setSyncStatus('err', 'エラー'); return; }
+        accessToken = resp.access_token;
+        document.getElementById('driveBtn').textContent = '☁ 同期中';
+        setSyncStatus('busy', '読み込み中...');
+        await loadFromDrive();
+      }
+    });
+  }
+  tokenClient.requestAccessToken();
+}
+
+async function driveRequest(method, url, body) {
+  const opts = {
+    method,
+    headers: { 'Authorization': 'Bearer ' + accessToken }
+  };
+  if (body) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  }
+  const r = await fetch(url, opts);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+async function findDriveFile() {
+  const r = await driveRequest('GET',
+    `https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=name='${FILE_NAME}'&fields=files(id,name)`);
+  return r.files && r.files.length > 0 ? r.files[0].id : null;
+}
+
+async function loadFromDrive() {
+  try {
+    driveFileId = await findDriveFile();
+    if (driveFileId) {
+      const r = await fetch(
+        `https://www.googleapis.com/drive/v3/files/${driveFileId}?alt=media`,
+        { headers: { 'Authorization': 'Bearer ' + accessToken } }
+      );
+      if (r.ok) {
+        const data = await r.json();
+        // Merge: Drive wins for initial load
+        S = data;
+        localStorage.setItem(SK, JSON.stringify(S));
+        selId = null;
+        render();
+      }
+    }
+    setSyncStatus('ok', '同期済み');
+    document.getElementById('driveBtn').textContent = '☁ 同期済み';
+  } catch(e) {
+    setSyncStatus('err', '読込エラー');
+  }
+}
+
+async function saveToDrive() {
+  if (!accessToken) return;
+  setSyncStatus('busy', '保存中...');
+  try {
+    const content = JSON.stringify(S);
+    const blob = new Blob([content], { type: 'application/json' });
+
+    if (!driveFileId) {
+      // Create new file in appDataFolder
+      const meta = { name: FILE_NAME, parents: ['appDataFolder'] };
+      const form = new FormData();
+      form.append('metadata', new Blob([JSON.stringify(meta)], { type: 'application/json' }));
+      form.append('file', blob);
+      const r = await fetch(
+        'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+        { method: 'POST', headers: { 'Authorization': 'Bearer ' + accessToken }, body: form }
+      );
+      const data = await r.json();
+      driveFileId = data.id;
+    } else {
+      // Update existing file
+      await fetch(
+        `https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`,
+        { method: 'PATCH', headers: { 'Authorization': 'Bearer ' + accessToken, 'Content-Type': 'application/json' }, body: content }
+      );
+    }
+    setSyncStatus('ok', '同期済み');
+  } catch(e) {
+    setSyncStatus('err', '保存エラー');
+  }
+}
+
+function scheduleDriveSync() {
+  if (!accessToken) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(saveToDrive, 1500);
+}
+
+// ═══════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════
 function renderTabs() {
   const bar=document.getElementById('tabBar'); bar.innerHTML='';
-  const mk=(cls,label,pill,pillCls,onclick)=>{ const t=document.createElement('div'); t.className=cls; t.innerHTML=`<span>${label}</span><span class="pill ${pillCls}">${pill}</span>`; t.onclick=onclick; return t; };
-  bar.appendChild(mk('tab common'+(S.activeTab==='common'?' active':''),'共通','共','',()=>{ S.activeTab='common'; selId=null; save(); render(); }));
-  S.companies.forEach(c=>{ bar.appendChild(mk('tab company'+(S.activeTab===c.id?' active':''), esc(c.name),'社','',()=>{ S.activeTab=c.id; selId=null; save(); render(); })); });
+  const mk=(cls,label,pill,onclick)=>{ const t=document.createElement('div'); t.className=cls; t.innerHTML=`<span>${label}</span><span class="pill">${pill}</span>`; t.onclick=onclick; return t; };
+  bar.appendChild(mk('tab common'+(S.activeTab==='common'?' active':''),'共通','共',()=>{ S.activeTab='common'; selId=null; save(); render(); }));
+  S.companies.forEach(c=>{ bar.appendChild(mk('tab company'+(S.activeTab===c.id?' active':''), esc(c.name),'社',()=>{ S.activeTab=c.id; selId=null; save(); render(); })); });
   if(S.companies.length<10){ const a=document.createElement('div'); a.className='tab add'; a.textContent='+'; a.onclick=openModal; bar.appendChild(a); }
 }
 
-// ── Meta bar ──
 function renderMeta() {
   const mb=document.getElementById('metaBar');
   if(S.activeTab==='common'){ mb.innerHTML=''; return; }
@@ -301,7 +443,6 @@ function renderMeta() {
   mb.innerHTML=`<input class="mi" placeholder="業界・職種" value="${esc(d.meta.industry||'')}" oninput="updMeta('industry',this.value)"><input class="mi" placeholder="締切" value="${esc(d.meta.deadline||'')}" oninput="updMeta('deadline',this.value)"><button class="del-co" onclick="delCompany('${S.activeTab}')">企業を削除</button>`;
 }
 
-// ── Sidebar ──
 function renderSidebar() {
   const d=getData(), list=document.getElementById('sidebarList');
   document.getElementById('sidebarTitle').textContent=`ルート質問 ${d.qs.length}件`;
@@ -317,7 +458,6 @@ function renderSidebar() {
   if(!d.qs.length){ const e=document.createElement('div'); e.style.cssText='padding:14px;color:var(--text3);font-size:11px;text-align:center'; e.textContent='質問を追加してください'; list.appendChild(e); }
 }
 
-// ── Tree ──
 function renderTree() {
   const area=document.getElementById('treeArea'); area.innerHTML='';
   const d=getData();
@@ -330,10 +470,8 @@ function renderTree() {
 }
 
 function buildTree(q, container) {
-  // node-row = node card + h-connector + children-col
   const row=document.createElement('div'); row.className='node-row';
   row.appendChild(buildCard(q));
-
   if(q.children.length>0 && !q.subtreeCollapsed) {
     const hl=document.createElement('div'); hl.className='h-line'; row.appendChild(hl);
     const col=document.createElement('div'); col.className='children-col';
@@ -354,7 +492,6 @@ function buildCard(q) {
   node.className='node'+(q.collapsed?' collapsed':'');
   node.dataset.d=Math.min(q.depth,5);
 
-  // Migrate legacy string keywords to array
   if (typeof q.keywords === 'string') {
     q.keywords = q.keywords ? q.keywords.split(/[,、]/).map(k=>k.trim()).filter(Boolean) : [];
     save();
@@ -362,14 +499,12 @@ function buildCard(q) {
 
   const hasC=q.children.length>0;
   const subtreeBtn=hasC?`<button class="nb" title="${q.subtreeCollapsed?'子を展開':'子を折りたたむ'}" onclick="toggleSub('${q.id}')" style="font-size:9px">${q.subtreeCollapsed?'▶◀':'◀▶'}</button>`:'';
-
   const kwItems = q.keywords.map((kw,i)=>`
     <div class="kw-item">
       <div class="kw-bullet"></div>
       <input class="kw-input" value="${esc(kw)}" placeholder="キーワード" oninput="updKw('${q.id}',${i},this.value)" onkeydown="kwKeydown(event,'${q.id}',${i})">
       <button class="kw-del" onclick="delKw('${q.id}',${i})" tabindex="-1">×</button>
     </div>`).join('');
-
   const kwCount = q.keywords.length;
   const kwLabel = kwCount > 0 ? `🔑 キーワード <span style="color:var(--text3);font-size:9px">(${kwCount}件)</span>` : '🔑 キーワード';
 
@@ -383,10 +518,7 @@ function buildCard(q) {
         <button class="nb del" onclick="doDelQ('${q.id}')">×</button>
       </div>
     </div>
-    <div class="ncollapsed-hint">
-      <span>折りたたみ中</span>
-      ${hasC?`<span>子 ${q.children.length}件</span>`:''}
-    </div>
+    <div class="ncollapsed-hint"><span>折りたたみ中</span>${hasC?`<span>子 ${q.children.length}件</span>`:''}</div>
     <div class="nbody">
       <div class="kw-section">
         <div class="kw-header" onclick="toggleKw('${q.id}')">
@@ -410,33 +542,26 @@ function buildCard(q) {
 }
 
 function aH(el){ el.style.height='auto'; el.style.height=el.scrollHeight+'px'; }
-
-// ── Actions ──
 function render() { renderTabs(); renderMeta(); renderSidebar(); renderTree(); }
 
+// ── Actions ──
 function addRoot() {
   const d=getData(), q=makeQ(0); d.qs.push(q); selId=q.id; save(); render();
-  setTimeout(()=>{ const ta=document.querySelector(`.node[data-d="0"] .node-q`); if(ta){ ta.focus(); } },60);
+  setTimeout(()=>{ const ta=document.querySelector('.node[data-d="0"] .node-q'); if(ta) ta.focus(); },60);
 }
-
 function addChild(pid) {
   const d=getData(), p=findQ(d.qs,pid); if(!p) return;
   const c=makeQ(p.depth+1); p.children.push(c);
   if(p.subtreeCollapsed) p.subtreeCollapsed=false;
   save(); render();
-  setTimeout(()=>{ const ta=document.querySelector(`.node[data-d="${Math.min(p.depth+1,5)}"] .node-q`); /* best effort */ },60);
 }
-
 function updQ(id, field, val) {
   const d=getData(), q=findQ(d.qs,id); if(q){ q[field]=val; save(); }
   if(field==='text') renderSidebar();
 }
-
 function updMeta(f, v) { const d=getData(); if(!d.meta) d.meta={}; d.meta[f]=v; save(); }
-
 function toggleNode(id) { const d=getData(), q=findQ(d.qs,id); if(q){ q.collapsed=!q.collapsed; save(); render(); } }
 function toggleSub(id) { const d=getData(), q=findQ(d.qs,id); if(q){ q.subtreeCollapsed=!q.subtreeCollapsed; save(); render(); } }
-
 function doDelQ(id) {
   const d=getData();
   const isRoot=d.qs.some(q=>q.id===id);
@@ -445,13 +570,11 @@ function doDelQ(id) {
   if(isRoot) selId=null;
   save(); render();
 }
-
 function delCompany(id) {
   if(!confirm('この企業とすべての質問を削除しますか？')) return;
   S.companies=S.companies.filter(c=>c.id!==id); delete S.cd[id];
   S.activeTab='common'; selId=null; save(); render();
 }
-
 function collapseAll() {
   const d=getData();
   const set=qs=>qs.forEach(q=>{ q.subtreeCollapsed=true; q.collapsed=false; set(q.children); });
@@ -463,17 +586,11 @@ function expandAll() {
   set(d.qs); save(); render();
 }
 
-// Keyword list actions
+// ── Keywords ──
 function addKw(qid) {
   const d=getData(), q=findQ(d.qs,qid); if(!q) return;
   q.keywords.push(''); save(); render();
   setTimeout(()=>{
-    const inputs=document.querySelectorAll(`.node[data-id="${qid}"] .kw-input`);
-    // find last kw-input in this node
-    const nodeEl=document.querySelector(`.node[data-d]`);
-    // focus last added
-    const allKwInputs=[...document.querySelectorAll('.kw-input')];
-    // find node by scanning
     const nodes=[...document.querySelectorAll('.node')];
     for(const n of nodes){
       const ta=n.querySelector('.node-q');
@@ -485,24 +602,15 @@ function addKw(qid) {
     }
   },40);
 }
-function delKw(qid, idx) {
-  const d=getData(), q=findQ(d.qs,qid); if(!q) return;
-  q.keywords.splice(idx,1); save(); render();
-}
-function updKw(qid, idx, val) {
-  const d=getData(), q=findQ(d.qs,qid); if(!q) return;
-  q.keywords[idx]=val; save();
-}
+function delKw(qid, idx) { const d=getData(), q=findQ(d.qs,qid); if(!q) return; q.keywords.splice(idx,1); save(); render(); }
+function updKw(qid, idx, val) { const d=getData(), q=findQ(d.qs,qid); if(!q) return; q.keywords[idx]=val; save(); }
 function kwKeydown(e, qid, idx) {
   if(e.key==='Enter'){ e.preventDefault(); addKw(qid); }
-  if(e.key==='Backspace' && e.target.value==='') { e.preventDefault(); delKw(qid,idx); }
+  if(e.key==='Backspace'&&e.target.value===''){e.preventDefault(); delKw(qid,idx);}
 }
-function toggleKw(qid) {
-  const d=getData(), q=findQ(d.qs,qid); if(!q) return;
-  q.kwCollapsed=!q.kwCollapsed; save(); render();
-}
+function toggleKw(qid) { const d=getData(), q=findQ(d.qs,qid); if(!q) return; q.kwCollapsed=!q.kwCollapsed; save(); render(); }
 
-// Sidebar toggle
+// ── Sidebar toggle ──
 let sidebarOpen = true;
 function toggleSidebar() {
   sidebarOpen=!sidebarOpen;
@@ -510,7 +618,7 @@ function toggleSidebar() {
   if(sidebarOpen) sb.classList.remove('closed'); else sb.classList.add('closed');
 }
 
-// Modal
+// ── Modal ──
 function openModal() { document.getElementById('modalInput').value=''; document.getElementById('modal').style.display='flex'; setTimeout(()=>document.getElementById('modalInput').focus(),50); }
 function closeModal() { document.getElementById('modal').style.display='none'; }
 function confirmModal() {

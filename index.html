@@ -1,0 +1,527 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>面接メモ帳</title>
+<link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #f5f3ee;
+  --surface: #fdfcf8;
+  --surface2: #eeeae0;
+  --border: #d8d2c4;
+  --text: #2a2620;
+  --text2: #7a7060;
+  --text3: #b0a898;
+  --accent: #2a2620;
+  --c0: #2a2620;
+  --c1: #2c5f8a;
+  --c2: #3a7d5e;
+  --c3: #c4622a;
+  --c4: #6b3fa0;
+  --c5: #a07830;
+  --radius: 10px;
+  --radius-sm: 6px;
+  --node-w: 280px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Zen Kaku Gothic New', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; overflow-x: hidden; }
+
+header { background: var(--accent); padding: 13px 20px; display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 200; }
+header h1 { font-size: 15px; font-weight: 700; color: #f5f3ee; letter-spacing: 0.08em; flex: 1; }
+.hdr-btn { background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2); color: #f5f3ee; font-family: inherit; font-size: 11px; padding: 5px 11px; border-radius: 5px; cursor: pointer; transition: background 0.15s; }
+.hdr-btn:hover { background: rgba(255,255,255,0.22); }
+
+.tabs { display: flex; overflow-x: auto; background: var(--surface); border-bottom: 2px solid var(--border); padding: 0 10px; scrollbar-width: none; gap: 2px; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab { padding: 9px 13px; font-size: 12px; font-weight: 700; font-family: inherit; color: var(--text2); cursor: pointer; border-bottom: 3px solid transparent; margin-bottom: -2px; white-space: nowrap; display: flex; align-items: center; gap: 5px; transition: color 0.15s; user-select: none; letter-spacing: 0.02em; }
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab .pill { font-size: 9px; padding: 1px 5px; border-radius: 3px; font-weight: 700; }
+.tab.common .pill { background: #d4ece0; color: #3a7d5e; }
+.tab.company .pill { background: #d4e4f0; color: #2c5f8a; }
+.tab.add { color: var(--text3); font-size: 20px; padding: 5px 11px; }
+.tab.add:hover { color: var(--accent); }
+
+.layout { display: flex; height: calc(100vh - 82px); overflow: hidden; }
+
+/* Sidebar */
+.sidebar { width: 240px; min-width: 240px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow: hidden; transition: width 0.22s ease, min-width 0.22s ease; }
+.sidebar.closed { width: 36px; min-width: 36px; }
+.sidebar.closed .sidebar-list,
+.sidebar.closed .add-root-btn,
+.sidebar.closed .sidebar-title { display: none; }
+.sidebar-header { padding: 10px 10px 8px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 6px; cursor: pointer; user-select: none; }
+.sidebar-header:hover { background: var(--surface2); }
+.sidebar-title { font-size: 10px; font-weight: 700; letter-spacing: 0.12em; color: var(--text3); text-transform: uppercase; white-space: nowrap; overflow: hidden; }
+.sidebar-toggle { width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text3); flex-shrink: 0; transition: transform 0.2s; }
+.sidebar.closed .sidebar-toggle { transform: rotate(180deg); }
+.sidebar-list { flex: 1; overflow-y: auto; padding: 6px; }
+.sidebar-item { padding: 9px 11px; border-radius: 6px; cursor: pointer; border: 1px solid transparent; margin-bottom: 2px; transition: background 0.12s; }
+.sidebar-item:hover { background: var(--surface2); }
+.sidebar-item.active { background: var(--accent); }
+.sidebar-item .sq { font-size: 12px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sidebar-item .sm { font-size: 10px; color: var(--text3); margin-top: 2px; }
+.sidebar-item.active .sq { color: #f5f3ee; }
+.sidebar-item.active .sm { color: rgba(245,243,238,0.45); }
+.add-root-btn { margin: 6px; padding: 9px 12px; background: transparent; border: 1px dashed var(--border); border-radius: 6px; color: var(--text3); font-size: 12px; font-family: inherit; cursor: pointer; width: calc(100% - 12px); text-align: left; transition: all 0.15s; }
+.add-root-btn:hover { border-color: var(--accent); color: var(--accent); background: var(--surface2); }
+
+/* Tree area */
+.tree-area { flex: 1; overflow: auto; padding: 28px 20px; }
+.empty-state { padding-top: 80px; text-align: center; color: var(--text3); }
+.empty-state .icon { font-size: 44px; margin-bottom: 14px; }
+.empty-state p { font-size: 13px; line-height: 1.9; }
+
+/* Tree layout: vertical rows, children expand rightward */
+.tree-wrap { display: inline-flex; flex-direction: column; gap: 0; }
+
+/* Each "level row" = the node + connector + its children column */
+.node-row { display: flex; align-items: flex-start; }
+
+/* Children sit to the right, stacked vertically */
+.children-col {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  padding-left: 0;
+  margin-left: 0;
+}
+
+/* Vertical line left of children group */
+.children-col::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 24px;
+  bottom: 24px;
+  width: 1.5px;
+  background: var(--border);
+}
+
+/* Each child: connector + sub-tree */
+.child-item { display: flex; align-items: flex-start; position: relative; padding: 5px 0; }
+
+/* Horizontal connector from vertical bar to child node */
+.child-item::before {
+  content: '';
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  width: 20px;
+  height: 1.5px;
+  background: var(--border);
+}
+
+.child-item-inner { margin-left: 40px; display: flex; align-items: flex-start; }
+
+/* Connector from parent node to children column */
+.h-line { width: 20px; height: 1.5px; background: var(--border); align-self: center; flex-shrink: 0; }
+
+/* ── Node card ── */
+.node {
+  width: var(--node-w);
+  min-width: var(--node-w);
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius);
+  flex-shrink: 0;
+  transition: box-shadow 0.2s;
+  overflow: hidden;
+}
+.node:hover { box-shadow: 0 3px 14px rgba(0,0,0,0.09); }
+.node[data-d="0"] { border-top: 3px solid var(--c0); }
+.node[data-d="1"] { border-top: 3px solid var(--c1); }
+.node[data-d="2"] { border-top: 3px solid var(--c2); }
+.node[data-d="3"] { border-top: 3px solid var(--c3); }
+.node[data-d="4"] { border-top: 3px solid var(--c4); }
+.node[data-d="5"] { border-top: 3px solid var(--c5); }
+
+.node-head { display: flex; align-items: flex-start; gap: 6px; padding: 10px 11px 6px; }
+.ddot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; margin-top: 4px; }
+.node[data-d="0"] .ddot { background: var(--c0); }
+.node[data-d="1"] .ddot { background: var(--c1); }
+.node[data-d="2"] .ddot { background: var(--c2); }
+.node[data-d="3"] .ddot { background: var(--c3); }
+.node[data-d="4"] .ddot { background: var(--c4); }
+.node[data-d="5"] .ddot { background: var(--c5); }
+
+.node-q { flex: 1; font-size: 12px; font-weight: 700; background: transparent; border: none; color: var(--text); font-family: inherit; outline: none; resize: none; line-height: 1.45; width: 100%; min-height: 34px; }
+.node-q::placeholder { color: var(--text3); font-weight: 400; }
+.node-btns { display: flex; gap: 1px; flex-shrink: 0; }
+.nb { width: 22px; height: 22px; border: none; background: transparent; color: var(--text3); cursor: pointer; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 12px; transition: all 0.12s; }
+.nb:hover { background: var(--surface2); color: var(--text); }
+.nb.del:hover { background: #fde8e8; color: #c0392b; }
+
+/* Collapsed: hide body & footer, show summary */
+.node.collapsed .nbody { display: none; }
+.node.collapsed .nfooter { display: none; }
+.node.collapsed .ncollapsed-hint { display: flex; }
+.ncollapsed-hint { display: none; padding: 4px 11px 8px; font-size: 10px; color: var(--text3); gap: 6px; align-items: center; }
+
+.nbody { padding: 0 11px 10px; display: flex; flex-direction: column; gap: 8px; }
+.fl { font-size: 9px; font-weight: 700; letter-spacing: 0.12em; color: var(--text3); text-transform: uppercase; margin-bottom: 3px; }
+.fi { width: 100%; background: var(--surface2); border: 1px solid transparent; border-radius: 5px; color: var(--text); font-family: inherit; font-size: 11px; padding: 6px 8px; outline: none; transition: border-color 0.12s; resize: none; line-height: 1.5; }
+.fi:focus { border-color: var(--border); background: var(--surface); }
+.fi::placeholder { color: var(--text3); }
+
+/* Keyword bullet list */
+.kw-section {}
+.kw-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 3px; cursor: pointer; user-select: none; border-radius: 4px; padding: 2px 3px; transition: background 0.1s; }
+.kw-header:hover { background: var(--surface2); }
+.kw-toggle { font-size: 9px; color: var(--text3); }
+.kw-list { display: flex; flex-direction: column; gap: 3px; margin-bottom: 2px; }
+.kw-list.collapsed { display: none; }
+.kw-item { display: flex; align-items: center; gap: 5px; background: var(--surface2); border: 1px solid transparent; border-radius: 5px; padding: 4px 7px; transition: border-color 0.1s; }
+.kw-item:focus-within { border-color: var(--border); background: var(--surface); }
+.kw-bullet { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.node[data-d="0"] .kw-bullet { background: var(--c0); }
+.node[data-d="1"] .kw-bullet { background: var(--c1); }
+.node[data-d="2"] .kw-bullet { background: var(--c2); }
+.node[data-d="3"] .kw-bullet { background: var(--c3); }
+.node[data-d="4"] .kw-bullet { background: var(--c4); }
+.node[data-d="5"] .kw-bullet { background: var(--c5); }
+.kw-input { flex: 1; background: transparent; border: none; color: var(--text); font-family: inherit; font-size: 11px; outline: none; min-width: 0; line-height: 1.4; }
+.kw-input::placeholder { color: var(--text3); }
+.kw-del { width: 16px; height: 16px; border: none; background: transparent; color: var(--text3); cursor: pointer; font-size: 12px; display: flex; align-items: center; justify-content: center; border-radius: 3px; flex-shrink: 0; transition: all 0.1s; padding: 0; line-height: 1; }
+.kw-del:hover { color: #c0392b; background: #fde8e8; }
+.kw-add { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--text3); background: transparent; border: 1px dashed var(--border); border-radius: 4px; padding: 3px 7px; cursor: pointer; font-family: inherit; transition: all 0.1s; width: 100%; margin-top: 2px; }
+.kw-add:hover { color: var(--accent); border-color: var(--accent); }
+
+.nfooter { padding: 7px 11px; border-top: 1px solid var(--surface2); display: flex; gap: 6px; align-items: center; }
+.sb { font-size: 10px; font-family: inherit; font-weight: 600; padding: 4px 9px; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--text2); cursor: pointer; transition: all 0.12s; }
+.sb:hover { background: var(--surface2); color: var(--text); }
+.child-count { font-size: 10px; color: var(--text3); }
+
+/* Subtree collapsed */
+.subtree-hidden { display: none; }
+
+/* Company meta */
+.meta-bar { display: flex; gap: 8px; padding: 9px 14px; background: var(--surface); border-bottom: 1px solid var(--border); flex-wrap: wrap; align-items: center; }
+.mi { background: var(--surface2); border: 1px solid transparent; border-radius: 5px; color: var(--text); font-family: inherit; font-size: 11px; padding: 5px 10px; outline: none; flex: 1; min-width: 120px; transition: border-color 0.12s; }
+.mi:focus { border-color: var(--border); }
+.mi::placeholder { color: var(--text3); }
+.del-co { font-size: 11px; font-family: inherit; padding: 5px 10px; border-radius: 4px; border: 1px solid #e8c8c8; background: transparent; color: #c0392b; cursor: pointer; white-space: nowrap; transition: background 0.12s; }
+.del-co:hover { background: #fde8e8; }
+
+/* Modal */
+.mo { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 500; display: flex; align-items: center; justify-content: center; padding: 20px; backdrop-filter: blur(2px); }
+.mc { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 22px; width: 100%; max-width: 340px; box-shadow: 0 20px 60px rgba(0,0,0,0.14); }
+.mc h3 { font-size: 14px; margin-bottom: 14px; font-weight: 700; }
+.mc input { width: 100%; background: var(--surface2); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-family: inherit; font-size: 13px; padding: 9px 12px; outline: none; margin-bottom: 14px; }
+.mc input:focus { border-color: var(--accent); }
+.ma { display: flex; gap: 8px; justify-content: flex-end; }
+.bp { background: var(--accent); color: var(--bg); font-family: inherit; font-size: 12px; font-weight: 700; padding: 7px 15px; border-radius: 5px; border: none; cursor: pointer; }
+.bp:hover { opacity: 0.8; }
+.bg { background: transparent; color: var(--text2); font-family: inherit; font-size: 12px; padding: 7px 13px; border-radius: 5px; border: 1px solid var(--border); cursor: pointer; }
+.bg:hover { background: var(--surface2); }
+
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+@media (max-width: 600px) {
+  .sidebar { width: 180px; min-width: 180px; }
+  :root { --node-w: 220px; }
+  .tree-area { padding: 16px 10px; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📋 面接メモ帳</h1>
+  <button class="hdr-btn" onclick="collapseAll()">すべて折りたたむ</button>
+  <button class="hdr-btn" onclick="expandAll()">すべて展開</button>
+</header>
+
+<div class="tabs" id="tabBar"></div>
+<div id="metaBar"></div>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header" onclick="toggleSidebar()">
+      <div class="sidebar-title" id="sidebarTitle">ルート質問</div>
+      <div class="sidebar-toggle" id="sidebarToggle">◀</div>
+    </div>
+    <div class="sidebar-list" id="sidebarList"></div>
+    <button class="add-root-btn" onclick="addRoot()">＋ 質問を追加</button>
+  </aside>
+  <div class="tree-area" id="treeArea"></div>
+</div>
+
+<div class="mo" id="modal" style="display:none">
+  <div class="mc">
+    <h3>企業を追加</h3>
+    <input type="text" id="modalInput" placeholder="企業名..." maxlength="30">
+    <div class="ma">
+      <button class="bg" onclick="closeModal()">キャンセル</button>
+      <button class="bp" onclick="confirmModal()">追加</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const SK = 'mensetsu_v4';
+const fresh = () => ({ activeTab:'common', companies:[], common:{ qs:[] }, cd:{} });
+let S = (() => { try { const r=localStorage.getItem(SK); return r?JSON.parse(r):fresh(); } catch(e){ return fresh(); } })();
+let selId = null;
+
+const save = () => localStorage.setItem(SK, JSON.stringify(S));
+const uid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+function getData() {
+  if (S.activeTab==='common') return S.common;
+  if (!S.cd[S.activeTab]) S.cd[S.activeTab]={ qs:[], meta:{industry:'',deadline:''} };
+  return S.cd[S.activeTab];
+}
+function makeQ(depth=0) { return { id:uid(), text:'', keywords:[], kwCollapsed:false, answer:'', children:[], depth, collapsed:false, subtreeCollapsed:false }; }
+function findQ(qs, id) { for(const q of qs){ if(q.id===id) return q; const f=findQ(q.children,id); if(f) return f; } return null; }
+function delQ(qs, id) { const i=qs.findIndex(q=>q.id===id); if(i!==-1){ qs.splice(i,1); return true; } for(const q of qs){ if(delQ(q.children,id)) return true; } return false; }
+function countDesc(q) { let n=q.children.length; q.children.forEach(c=>{ n+=countDesc(c); }); return n; }
+function findRootId(qs, id) { for(const q of qs){ if(q.id===id||findQ(q.children,id)) return q.id; } return null; }
+
+// ── Tabs ──
+function renderTabs() {
+  const bar=document.getElementById('tabBar'); bar.innerHTML='';
+  const mk=(cls,label,pill,pillCls,onclick)=>{ const t=document.createElement('div'); t.className=cls; t.innerHTML=`<span>${label}</span><span class="pill ${pillCls}">${pill}</span>`; t.onclick=onclick; return t; };
+  bar.appendChild(mk('tab common'+(S.activeTab==='common'?' active':''),'共通','共','',()=>{ S.activeTab='common'; selId=null; save(); render(); }));
+  S.companies.forEach(c=>{ bar.appendChild(mk('tab company'+(S.activeTab===c.id?' active':''), esc(c.name),'社','',()=>{ S.activeTab=c.id; selId=null; save(); render(); })); });
+  if(S.companies.length<10){ const a=document.createElement('div'); a.className='tab add'; a.textContent='+'; a.onclick=openModal; bar.appendChild(a); }
+}
+
+// ── Meta bar ──
+function renderMeta() {
+  const mb=document.getElementById('metaBar');
+  if(S.activeTab==='common'){ mb.innerHTML=''; return; }
+  const d=getData(); if(!d.meta) d.meta={industry:'',deadline:''};
+  mb.className='meta-bar';
+  mb.innerHTML=`<input class="mi" placeholder="業界・職種" value="${esc(d.meta.industry||'')}" oninput="updMeta('industry',this.value)"><input class="mi" placeholder="締切" value="${esc(d.meta.deadline||'')}" oninput="updMeta('deadline',this.value)"><button class="del-co" onclick="delCompany('${S.activeTab}')">企業を削除</button>`;
+}
+
+// ── Sidebar ──
+function renderSidebar() {
+  const d=getData(), list=document.getElementById('sidebarList');
+  document.getElementById('sidebarTitle').textContent=`ルート質問 ${d.qs.length}件`;
+  list.innerHTML='';
+  d.qs.forEach(q=>{
+    const item=document.createElement('div');
+    item.className='sidebar-item'+(selId===q.id?' active':'');
+    const desc=countDesc(q);
+    item.innerHTML=`<div class="sq">${esc(q.text.trim()||'（未入力）')}</div><div class="sm">${desc>0?`深掘り ${desc}件`:'深掘りなし'}</div>`;
+    item.onclick=()=>{ selId=q.id; renderSidebar(); renderTree(); };
+    list.appendChild(item);
+  });
+  if(!d.qs.length){ const e=document.createElement('div'); e.style.cssText='padding:14px;color:var(--text3);font-size:11px;text-align:center'; e.textContent='質問を追加してください'; list.appendChild(e); }
+}
+
+// ── Tree ──
+function renderTree() {
+  const area=document.getElementById('treeArea'); area.innerHTML='';
+  const d=getData();
+  if(!d.qs.length){ area.innerHTML=`<div class="empty-state"><div class="icon">🌿</div><p>左の「＋ 質問を追加」から<br>最初の質問を作成してください</p></div>`; return; }
+  if(!selId||!findQ(d.qs,selId)){ area.innerHTML=`<div class="empty-state"><div class="icon">👈</div><p>左のリストから<br>質問を選択してください</p></div>`; return; }
+  const root=findQ(d.qs,selId);
+  const wrap=document.createElement('div'); wrap.className='tree-wrap';
+  buildTree(root, wrap);
+  area.appendChild(wrap);
+}
+
+function buildTree(q, container) {
+  // node-row = node card + h-connector + children-col
+  const row=document.createElement('div'); row.className='node-row';
+  row.appendChild(buildCard(q));
+
+  if(q.children.length>0 && !q.subtreeCollapsed) {
+    const hl=document.createElement('div'); hl.className='h-line'; row.appendChild(hl);
+    const col=document.createElement('div'); col.className='children-col';
+    q.children.forEach(child=>{
+      const ci=document.createElement('div'); ci.className='child-item';
+      const inner=document.createElement('div'); inner.className='child-item-inner';
+      buildTree(child, inner);
+      ci.appendChild(inner);
+      col.appendChild(ci);
+    });
+    row.appendChild(col);
+  }
+  container.appendChild(row);
+}
+
+function buildCard(q) {
+  const node=document.createElement('div');
+  node.className='node'+(q.collapsed?' collapsed':'');
+  node.dataset.d=Math.min(q.depth,5);
+
+  // Migrate legacy string keywords to array
+  if (typeof q.keywords === 'string') {
+    q.keywords = q.keywords ? q.keywords.split(/[,、]/).map(k=>k.trim()).filter(Boolean) : [];
+    save();
+  }
+
+  const hasC=q.children.length>0;
+  const subtreeBtn=hasC?`<button class="nb" title="${q.subtreeCollapsed?'子を展開':'子を折りたたむ'}" onclick="toggleSub('${q.id}')" style="font-size:9px">${q.subtreeCollapsed?'▶◀':'◀▶'}</button>`:'';
+
+  const kwItems = q.keywords.map((kw,i)=>`
+    <div class="kw-item">
+      <div class="kw-bullet"></div>
+      <input class="kw-input" value="${esc(kw)}" placeholder="キーワード" oninput="updKw('${q.id}',${i},this.value)" onkeydown="kwKeydown(event,'${q.id}',${i})">
+      <button class="kw-del" onclick="delKw('${q.id}',${i})" tabindex="-1">×</button>
+    </div>`).join('');
+
+  const kwCount = q.keywords.length;
+  const kwLabel = kwCount > 0 ? `🔑 キーワード <span style="color:var(--text3);font-size:9px">(${kwCount}件)</span>` : '🔑 キーワード';
+
+  node.innerHTML=`
+    <div class="node-head">
+      <div class="ddot"></div>
+      <textarea class="node-q" rows="2" placeholder="${q.depth===0?'質問を入力...':'深掘り質問...'}" oninput="updQ('${q.id}','text',this.value);aH(this)">${esc(q.text)}</textarea>
+      <div class="node-btns">
+        <button class="nb" title="${q.collapsed?'展開':'折りたたむ'}" onclick="toggleNode('${q.id}')" style="font-size:10px">${q.collapsed?'▼':'▲'}</button>
+        ${subtreeBtn}
+        <button class="nb del" onclick="doDelQ('${q.id}')">×</button>
+      </div>
+    </div>
+    <div class="ncollapsed-hint">
+      <span>折りたたみ中</span>
+      ${hasC?`<span>子 ${q.children.length}件</span>`:''}
+    </div>
+    <div class="nbody">
+      <div class="kw-section">
+        <div class="kw-header" onclick="toggleKw('${q.id}')">
+          <div class="fl" style="margin-bottom:0">${kwLabel}</div>
+          <span class="kw-toggle">${q.kwCollapsed?'▼':'▲'}</span>
+        </div>
+        <div class="kw-list${q.kwCollapsed?' collapsed':''}">
+          ${kwItems}
+          <button class="kw-add" onclick="addKw('${q.id}')">＋ キーワードを追加</button>
+        </div>
+      </div>
+      <div><div class="fl">💬 回答例</div><textarea class="fi" rows="3" placeholder="回答例を入力..." oninput="updQ('${q.id}','answer',this.value);aH(this)">${esc(q.answer)}</textarea></div>
+    </div>
+    <div class="nfooter">
+      <button class="sb" onclick="addChild('${q.id}')">＋ 深掘りを追加</button>
+      ${hasC?`<span class="child-count">子 ${q.children.length}件 / 計 ${countDesc(q)}件</span>`:''}
+    </div>
+  `;
+  setTimeout(()=>{ node.querySelectorAll('textarea').forEach(ta=>aH(ta)); },0);
+  return node;
+}
+
+function aH(el){ el.style.height='auto'; el.style.height=el.scrollHeight+'px'; }
+
+// ── Actions ──
+function render() { renderTabs(); renderMeta(); renderSidebar(); renderTree(); }
+
+function addRoot() {
+  const d=getData(), q=makeQ(0); d.qs.push(q); selId=q.id; save(); render();
+  setTimeout(()=>{ const ta=document.querySelector(`.node[data-d="0"] .node-q`); if(ta){ ta.focus(); } },60);
+}
+
+function addChild(pid) {
+  const d=getData(), p=findQ(d.qs,pid); if(!p) return;
+  const c=makeQ(p.depth+1); p.children.push(c);
+  if(p.subtreeCollapsed) p.subtreeCollapsed=false;
+  save(); render();
+  setTimeout(()=>{ const ta=document.querySelector(`.node[data-d="${Math.min(p.depth+1,5)}"] .node-q`); /* best effort */ },60);
+}
+
+function updQ(id, field, val) {
+  const d=getData(), q=findQ(d.qs,id); if(q){ q[field]=val; save(); }
+  if(field==='text') renderSidebar();
+}
+
+function updMeta(f, v) { const d=getData(); if(!d.meta) d.meta={}; d.meta[f]=v; save(); }
+
+function toggleNode(id) { const d=getData(), q=findQ(d.qs,id); if(q){ q.collapsed=!q.collapsed; save(); render(); } }
+function toggleSub(id) { const d=getData(), q=findQ(d.qs,id); if(q){ q.subtreeCollapsed=!q.subtreeCollapsed; save(); render(); } }
+
+function doDelQ(id) {
+  const d=getData();
+  const isRoot=d.qs.some(q=>q.id===id);
+  if(isRoot&&!confirm('この質問とすべての深掘りを削除しますか？')) return;
+  delQ(d.qs,id);
+  if(isRoot) selId=null;
+  save(); render();
+}
+
+function delCompany(id) {
+  if(!confirm('この企業とすべての質問を削除しますか？')) return;
+  S.companies=S.companies.filter(c=>c.id!==id); delete S.cd[id];
+  S.activeTab='common'; selId=null; save(); render();
+}
+
+function collapseAll() {
+  const d=getData();
+  const set=qs=>qs.forEach(q=>{ q.subtreeCollapsed=true; q.collapsed=false; set(q.children); });
+  set(d.qs); save(); render();
+}
+function expandAll() {
+  const d=getData();
+  const set=qs=>qs.forEach(q=>{ q.subtreeCollapsed=false; q.collapsed=false; set(q.children); });
+  set(d.qs); save(); render();
+}
+
+// Keyword list actions
+function addKw(qid) {
+  const d=getData(), q=findQ(d.qs,qid); if(!q) return;
+  q.keywords.push(''); save(); render();
+  setTimeout(()=>{
+    const inputs=document.querySelectorAll(`.node[data-id="${qid}"] .kw-input`);
+    // find last kw-input in this node
+    const nodeEl=document.querySelector(`.node[data-d]`);
+    // focus last added
+    const allKwInputs=[...document.querySelectorAll('.kw-input')];
+    // find node by scanning
+    const nodes=[...document.querySelectorAll('.node')];
+    for(const n of nodes){
+      const ta=n.querySelector('.node-q');
+      if(ta && ta.value===q.text){
+        const kwins=n.querySelectorAll('.kw-input');
+        if(kwins.length) kwins[kwins.length-1].focus();
+        break;
+      }
+    }
+  },40);
+}
+function delKw(qid, idx) {
+  const d=getData(), q=findQ(d.qs,qid); if(!q) return;
+  q.keywords.splice(idx,1); save(); render();
+}
+function updKw(qid, idx, val) {
+  const d=getData(), q=findQ(d.qs,qid); if(!q) return;
+  q.keywords[idx]=val; save();
+}
+function kwKeydown(e, qid, idx) {
+  if(e.key==='Enter'){ e.preventDefault(); addKw(qid); }
+  if(e.key==='Backspace' && e.target.value==='') { e.preventDefault(); delKw(qid,idx); }
+}
+function toggleKw(qid) {
+  const d=getData(), q=findQ(d.qs,qid); if(!q) return;
+  q.kwCollapsed=!q.kwCollapsed; save(); render();
+}
+
+// Sidebar toggle
+let sidebarOpen = true;
+function toggleSidebar() {
+  sidebarOpen=!sidebarOpen;
+  const sb=document.getElementById('sidebar');
+  if(sidebarOpen) sb.classList.remove('closed'); else sb.classList.add('closed');
+}
+
+// Modal
+function openModal() { document.getElementById('modalInput').value=''; document.getElementById('modal').style.display='flex'; setTimeout(()=>document.getElementById('modalInput').focus(),50); }
+function closeModal() { document.getElementById('modal').style.display='none'; }
+function confirmModal() {
+  const name=document.getElementById('modalInput').value.trim(); if(!name) return;
+  const id=uid(); S.companies.push({id,name}); S.cd[id]={qs:[],meta:{industry:'',deadline:''}};
+  S.activeTab=id; selId=null; save(); closeModal(); render();
+}
+document.getElementById('modal').onclick=e=>{ if(e.target.id==='modal') closeModal(); };
+document.getElementById('modalInput').onkeydown=e=>{ if(e.key==='Enter') confirmModal(); };
+
+render();
+</script>
+</body>
+</html>
